@@ -197,7 +197,13 @@ fi
 # ---------------------------------------------------------------------------
 mkdir -p "${DATA_DIR}"
 chmod 755 "${DATA_DIR}"
-info "Data directory: ${DATA_DIR}"
+# Give the calling user write access so GUI enrollment works without root
+if [[ -n "${SUDO_USER:-}" ]]; then
+    chown "${SUDO_USER}:${SUDO_USER}" "${DATA_DIR}"
+    info "Data directory owned by ${SUDO_USER}: ${DATA_DIR}"
+else
+    info "Data directory: ${DATA_DIR}"
+fi
 
 # ---------------------------------------------------------------------------
 # PAM module
