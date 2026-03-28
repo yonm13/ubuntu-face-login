@@ -5,6 +5,10 @@ Captures frames from the camera, validates face quality via YuNet
 landmarks, computes FaceNet-512 embeddings, and saves them as ``.npy``
 files alongside face thumbnails.
 
+Pose-guided enrollment captures samples across several head positions
+(straight, left, right, up, down) so that the matcher has coverage of
+the small angle variations that occur during real authentication.
+
 Layout in data_dir::
 
     data/
@@ -22,8 +26,9 @@ import logging
 import os
 import sys
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -36,7 +41,32 @@ from .emitter import activate_emitter
 
 logger = logging.getLogger(__name__)
 
-# Callback type hints (not enforced, for documentation)
+# ---------------------------------------------------------------------------
+# Pose guide
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Pose:
+    """A single guided head position with instructions for the user."""
+    label: str            # short machine-friendly id, e.g. "straight"
+    instruction: str      # human-readable prompt, e.g. "Look straight at the camera"
+    samples: int = 4      # how many samples to capture at this pose
+
+
+DEFAULT_POSES: List[Pose] = [
+    Pose("straight",    "Look straight at the camera",      samples=6),
+    Pose("left",        "Tilt your head slightly LEFT",     samples=4),
+    Pose("right",       "Tilt your head slightly RIGHT",    samples=4),
+    Pose("up",          "Tilt your head slightly UP",       samples=3),
+    Pose("down",        "Tilt your head slightly DOWN",     samples=3),
+]
+# Total default: 20 samples across 5 poses — better coverage than 70 frontal
+
+
+# ---------------------------------------------------------------------------
+# Callback type hints
+# ---------------------------------------------------------------------------
+
 # on_frame(frame, box, landmarks, confidence, valid, reason)
 OnFrameCallback = Callable[
     [np.ndarray, Optional[Box], Optional[Landmarks], Optional[float], bool, str],
@@ -44,14 +74,23 @@ OnFrameCallback = Callable[
 ]
 # on_sample(sample_index, total_samples)
 OnSampleCallback = Callable[[int, int], None]
+# on_pose(pose_index, pose, samples_this_pose, total_poses)
+OnPoseCallback = Callable[[int, Pose, int, int], None]
 
+
+# ---------------------------------------------------------------------------
+# Core enrollment function
+# ---------------------------------------------------------------------------
 
 def enroll_user(
     user_id: str,
     data_dir: Optional[str] = None,
     num_samples: Optional[int] = None,
+    poses: Optional[List[Pose]] = None,
+    sample_delay: float = 0.4,
     on_sample: Optional[OnSampleCallback] = None,
     on_frame: Optional[OnFrameCallback] = None,
+    on_pose: Optional[OnPoseCallback] = None,
 ) -> int:
     """Capture and save face embeddings for *user_id*.
 
@@ -63,14 +102,28 @@ def enroll_user(
         Directory to store ``.npy`` embeddings and ``faces/`` thumbnails.
         Defaults to ``config.data.dir``.
     num_samples:
-        Number of valid face samples to capture.
-        Defaults to ``config.enrollment.samples``.
+        Total number of valid face samples to capture.  When *poses* is
+        provided this is ignored — pose sample counts determine the total.
+        When neither *poses* nor *num_samples* is given, ``DEFAULT_POSES``
+        is used.
+    poses:
+        Ordered list of :class:`Pose` objects describing guided head
+        positions.  Pass an empty list or ``None`` for unguided capture.
+        If ``None`` and ``num_samples`` is set, falls back to unguided
+        capture with that many samples.
+    sample_delay:
+        Minimum seconds between consecutive saved samples.  Prevents
+        consecutive near-identical frames from inflating the sample count.
+        Default 0.4 s.
     on_sample:
         Called after each valid sample is saved: ``(index, total)``.
     on_frame:
-        Called for every frame read from the camera, regardless of
-        whether a face was detected or valid.  Useful for UI overlays:
-        ``(frame, box, landmarks, confidence, valid, reason)``.
+        Called for every camera frame: ``(frame, box, landmarks,
+        confidence, valid, reason)``.  Useful for UI overlays.
+    on_pose:
+        Called when the current pose changes:
+        ``(pose_index, pose, samples_this_pose, total_poses)``.
+        Not called in unguided mode.
 
     Returns
     -------
@@ -79,75 +132,150 @@ def enroll_user(
     """
     config = get_config()
     data_dir = data_dir or config.data.dir
-    num_samples = num_samples if num_samples is not None else config.enrollment.samples
     min_confidence = config.enrollment.min_confidence
+
+    # Resolve capture plan
+    if poses is None and num_samples is None:
+        # Default: guided multi-pose
+        capture_poses = DEFAULT_POSES
+        total_samples = sum(p.samples for p in capture_poses)
+    elif poses is not None:
+        # Explicit pose list
+        capture_poses = poses
+        total_samples = sum(p.samples for p in capture_poses)
+    else:
+        # num_samples set, no poses — unguided flat capture
+        capture_poses = []
+        total_samples = num_samples  # type: ignore[assignment]
 
     # Ensure output directories exist
     faces_dir = os.path.join(data_dir, "faces")
     os.makedirs(data_dir, exist_ok=True)
     os.makedirs(faces_dir, exist_ok=True)
 
-    # Setup camera + emitter
+    # Find next available index (don't overwrite existing embeddings)
+    existing = [
+        f for f in os.listdir(data_dir)
+        if f.startswith(f"{user_id}_") and f.endswith(".npy")
+    ]
+    start_index = len(existing)
+
     camera = Camera.auto_detect()
     activate_emitter(camera.device)
     frame = camera.open()
 
     saved = 0
+    last_saved_time = 0.0
 
     try:
-        while saved < num_samples:
-            box, landmarks, confidence = detect_face(frame)
+        if capture_poses:
+            # ---- Guided multi-pose capture ----
+            for pose_idx, pose in enumerate(capture_poses):
+                pose_saved = 0
 
-            valid = False
-            reason = "no face"
+                if on_pose is not None:
+                    on_pose(pose_idx, pose, pose.samples, len(capture_poses))
 
-            if confidence is not None and confidence >= min_confidence:
-                valid, reason = validate_liveness(box, landmarks, frame.shape)
-            elif confidence is not None:
-                reason = f"low confidence ({confidence:.2f})"
+                logger.info(
+                    "Pose %d/%d: %s (%d samples)",
+                    pose_idx + 1, len(capture_poses), pose.instruction, pose.samples,
+                )
 
-            # Fire per-frame callback (UI overlay, etc.)
-            if on_frame is not None:
-                on_frame(frame, box, landmarks, confidence, valid, reason)
+                while pose_saved < pose.samples:
+                    box, landmarks, confidence = detect_face(frame)
+                    valid = False
+                    reason = "no face"
 
-            if valid:
-                face_crop = crop_face(frame, box)
-                emb = get_embedding(face_crop)
+                    if confidence is not None and confidence >= min_confidence:
+                        valid, reason = validate_liveness(box, landmarks, frame.shape)
+                    elif confidence is not None:
+                        reason = f"low confidence ({confidence:.2f})"
 
-                # Save embedding
-                npy_path = os.path.join(data_dir, f"{user_id}_{saved}.npy")
-                np.save(npy_path, emb)
+                    if on_frame is not None:
+                        on_frame(frame, box, landmarks, confidence, valid, reason)
 
-                # Save face thumbnail
-                jpg_path = os.path.join(faces_dir, f"{user_id}_{saved}.jpg")
-                cv2.imwrite(jpg_path, frame)
+                    now = time.monotonic()
+                    if valid and (now - last_saved_time) >= sample_delay:
+                        face_crop = crop_face(frame, box)
+                        emb = get_embedding(face_crop)
 
-                saved += 1
-                logger.info("Sample %d/%d saved for %s", saved, num_samples, user_id)
+                        idx = start_index + saved
+                        np.save(os.path.join(data_dir, f"{user_id}_{idx}.npy"), emb)
+                        cv2.imwrite(
+                            os.path.join(faces_dir, f"{user_id}_{idx}.jpg"), frame
+                        )
 
-                if on_sample is not None:
-                    on_sample(saved, num_samples)
+                        saved += 1
+                        pose_saved += 1
+                        last_saved_time = now
+                        logger.info(
+                            "Sample %d/%d (pose: %s)",
+                            saved, total_samples, pose.label,
+                        )
 
-            # Next frame
-            try:
-                frame = camera.read()
-            except RuntimeError:
-                logger.warning("Camera read failed — stopping enrollment")
-                break
+                        if on_sample is not None:
+                            on_sample(saved, total_samples)
+
+                    try:
+                        frame = camera.read()
+                    except RuntimeError:
+                        logger.warning("Camera read failed — stopping")
+                        raise KeyboardInterrupt
+
+        else:
+            # ---- Unguided flat capture ----
+            while saved < total_samples:
+                box, landmarks, confidence = detect_face(frame)
+                valid = False
+                reason = "no face"
+
+                if confidence is not None and confidence >= min_confidence:
+                    valid, reason = validate_liveness(box, landmarks, frame.shape)
+                elif confidence is not None:
+                    reason = f"low confidence ({confidence:.2f})"
+
+                if on_frame is not None:
+                    on_frame(frame, box, landmarks, confidence, valid, reason)
+
+                now = time.monotonic()
+                if valid and (now - last_saved_time) >= sample_delay:
+                    face_crop = crop_face(frame, box)
+                    emb = get_embedding(face_crop)
+
+                    idx = start_index + saved
+                    np.save(os.path.join(data_dir, f"{user_id}_{idx}.npy"), emb)
+                    cv2.imwrite(
+                        os.path.join(faces_dir, f"{user_id}_{idx}.jpg"), frame
+                    )
+
+                    saved += 1
+                    last_saved_time = now
+
+                    if on_sample is not None:
+                        on_sample(saved, total_samples)
+
+                try:
+                    frame = camera.read()
+                except RuntimeError:
+                    logger.warning("Camera read failed — stopping")
+                    break
 
     except KeyboardInterrupt:
-        logger.info("Enrollment interrupted by user")
+        logger.info("Enrollment interrupted")
     finally:
         camera.release()
 
-    logger.info("Enrollment complete: %d/%d samples for %s", saved, num_samples, user_id)
+    logger.info(
+        "Enrollment complete: %d/%d samples for %s", saved, total_samples, user_id
+    )
     return saved
 
 
-# ── CLI entry point ────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
 
 def enroll_cli() -> None:
-    """CLI wrapper for enrollment with text progress output."""
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -156,7 +284,15 @@ def enroll_cli() -> None:
     parser.add_argument("user_id", help="User ID to enroll")
     parser.add_argument(
         "--samples", type=int, default=None,
-        help="Number of face samples to capture (default: from config)",
+        help="Number of face samples (unguided mode, overrides default poses)",
+    )
+    parser.add_argument(
+        "--no-poses", action="store_true",
+        help="Disable guided pose prompts, just capture N samples",
+    )
+    parser.add_argument(
+        "--delay", type=float, default=0.4,
+        help="Minimum seconds between saved samples (default: 0.4)",
     )
     parser.add_argument(
         "--data-dir", type=str, default=None,
@@ -164,30 +300,43 @@ def enroll_cli() -> None:
     )
     args = parser.parse_args()
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(levelname)s %(name)s: %(message)s",
-    )
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
-    config = get_config()
-    total = args.samples or config.enrollment.samples
+    if args.no_poses or args.samples:
+        poses = []
+        total = args.samples or sum(p.samples for p in DEFAULT_POSES)
+        print(f"Enrolling '{args.user_id}' — look at the camera, eyes open.")
+        print(f"Capturing {total} samples.  Press Ctrl+C to stop early.\n")
+    else:
+        poses = None
+        total = sum(p.samples for p in DEFAULT_POSES)
+        print(f"Enrolling '{args.user_id}' with guided pose capture ({total} samples).")
+        print("Follow the on-screen prompts.  Press Ctrl+C to stop early.\n")
 
-    print(f"Enrolling '{args.user_id}' — look at the camera, eyes open.")
-    print(f"Capturing {total} samples.  Press Ctrl+C to stop early.\n")
+    current_pose: list[str] = []
+
+    def on_pose(idx: int, pose: Pose, n: int, total_poses: int) -> None:
+        current_pose.clear()
+        current_pose.append(pose.instruction)
+        print(f"\n[Pose {idx+1}/{total_poses}] {pose.instruction} ({n} samples needed)")
 
     def on_sample(index: int, total: int) -> None:
-        print(f"  [✓] Sample {index}/{total}", flush=True)
+        pose_label = f" — {current_pose[0]}" if current_pose else ""
+        print(f"  [✓] Sample {index}/{total}{pose_label}", flush=True)
 
     saved = enroll_user(
         user_id=args.user_id,
         data_dir=args.data_dir,
-        num_samples=args.samples,
+        num_samples=args.samples if (args.no_poses or args.samples) else None,
+        poses=poses,
+        sample_delay=args.delay,
         on_sample=on_sample,
+        on_pose=on_pose if not args.no_poses else None,
     )
 
-    print(f"\n✅ Saved {saved} face embeddings for '{args.user_id}'.")
+    print(f"\n{'✅' if saved > 0 else '⚠'} Saved {saved} face embeddings for '{args.user_id}'.")
     if saved == 0:
-        print("⚠  No faces captured — make sure you're facing the camera with eyes open.")
+        print("No faces captured — make sure you're facing the camera with eyes open.")
         sys.exit(1)
 
 
