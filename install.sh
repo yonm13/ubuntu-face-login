@@ -293,6 +293,7 @@ set -euo pipefail
 INSTALL_DIR="/opt/ubuntu-face-login"
 VENV_DIR="${INSTALL_DIR}/.venv"
 export FACELOGIN_DIR="${INSTALL_DIR}"
+export PYTHONPATH="${INSTALL_DIR}/src"
 
 # Activate venv
 source "${VENV_DIR}/bin/activate"
@@ -340,10 +341,6 @@ EOF
 
 chmod 755 "${WRAPPER}"
 info "Wrapper installed at ${WRAPPER}"
-
-# Set PYTHONPATH so 'python -m facelogin.*' resolves from the installed src/
-# This is baked into the wrapper via FACELOGIN_DIR, but we also need PYTHONPATH
-sed -i '/^source.*activate$/a export PYTHONPATH="${INSTALL_DIR}/src"' "${WRAPPER}"
 
 # ---------------------------------------------------------------------------
 # Camera detection
