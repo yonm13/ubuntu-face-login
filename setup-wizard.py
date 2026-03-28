@@ -400,6 +400,7 @@ class EnrollPage(WizardPage):
                 on_frame=self._on_frame_guard,
                 on_sample=self._on_sample,
                 on_pose=self._on_pose,
+                on_pose_transition=self._on_pose_transition,
             )
         except Exception as exc:
             logger.exception("Enrollment error")
@@ -436,6 +437,15 @@ class EnrollPage(WizardPage):
 
     def _on_pose(self, idx: int, pose, n: int, total: int) -> None:
         GLib.idle_add(self._ui_pose, f"[{idx+1}/{total}]  {pose.instruction}")
+
+    def _on_pose_transition(self, next_pose, seconds: int) -> None:
+        if seconds == 0:
+            GLib.idle_add(self._ui_pose, f"➜  {next_pose.instruction}")
+        else:
+            GLib.idle_add(
+                self._ui_pose,
+                f"✓ Pose done!   Next: {next_pose.instruction}  ({seconds}s…)"
+            )
 
     def _ui_frame(self, texture, face_str, live_str) -> bool:
         self._picture.set_paintable(texture)

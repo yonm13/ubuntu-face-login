@@ -345,6 +345,15 @@ class EnrollWindow(Gtk.ApplicationWindow):
         instruction = f"[{pose_idx + 1}/{total_poses}]  {pose.instruction}"
         GLib.idle_add(self._ui_update_pose, instruction)
 
+    def _on_pose_transition(self, next_pose: Pose, seconds: int) -> None:
+        if seconds == 0:
+            GLib.idle_add(self._ui_update_pose, f"➜  {next_pose.instruction}")
+        else:
+            GLib.idle_add(
+                self._ui_update_pose,
+                f"✓ Pose done!   Next: {next_pose.instruction}  ({seconds}s…)"
+            )
+
     # ------------------------------------------------------------------
     # Main-thread UI mutations (return False to auto-dequeue)
     # ------------------------------------------------------------------
@@ -425,6 +434,7 @@ class EnrollWindow(Gtk.ApplicationWindow):
                 on_frame=self._on_frame_guard,
                 on_sample=self._on_sample,
                 on_pose=self._on_pose,
+                on_pose_transition=self._on_pose_transition,
             )
         except Exception as exc:
             logger.exception("Enrollment error")

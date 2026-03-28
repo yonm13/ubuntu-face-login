@@ -87,10 +87,12 @@ def enroll_user(
     data_dir: Optional[str] = None,
     num_samples: Optional[int] = None,
     poses: Optional[List[Pose]] = None,
-    sample_delay: float = 0.4,
+    sample_delay: float = 0.6,
+    pose_transition_delay: float = 3.0,
     on_sample: Optional[OnSampleCallback] = None,
     on_frame: Optional[OnFrameCallback] = None,
     on_pose: Optional[OnPoseCallback] = None,
+    on_pose_transition: Optional[Callable[[Pose, int], None]] = None,
 ) -> int:
     """Capture and save face embeddings for *user_id*.
 
@@ -114,16 +116,23 @@ def enroll_user(
     sample_delay:
         Minimum seconds between consecutive saved samples.  Prevents
         consecutive near-identical frames from inflating the sample count.
-        Default 0.4 s.
+        Default 0.6 s.
+    pose_transition_delay:
+        Seconds to pause between poses so the user can reposition.
+        A per-second countdown fires ``on_pose_transition`` during the gap.
+        Default 3.0 s.
     on_sample:
         Called after each valid sample is saved: ``(index, total)``.
     on_frame:
         Called for every camera frame: ``(frame, box, landmarks,
         confidence, valid, reason)``.  Useful for UI overlays.
     on_pose:
-        Called when the current pose changes:
+        Called when the current pose becomes active:
         ``(pose_index, pose, samples_this_pose, total_poses)``.
         Not called in unguided mode.
+    on_pose_transition:
+        Called once per second during the gap between poses:
+        ``(next_pose, seconds_remaining)``.  Use to show a countdown.
 
     Returns
     -------
@@ -172,6 +181,19 @@ def enroll_user(
             # ---- Guided multi-pose capture ----
             for pose_idx, pose in enumerate(capture_poses):
                 pose_saved = 0
+
+                # Countdown before pose starts (skip for first pose)
+                if pose_idx > 0 and pose_transition_delay > 0:
+                    next_pose = pose
+                    remaining = int(pose_transition_delay)
+                    while remaining > 0:
+                        if on_pose_transition is not None:
+                            on_pose_transition(next_pose, remaining)
+                        time.sleep(1.0)
+                        remaining -= 1
+                    # Fire one last tick at 0 so UI can clear the countdown
+                    if on_pose_transition is not None:
+                        on_pose_transition(next_pose, 0)
 
                 if on_pose is not None:
                     on_pose(pose_idx, pose, pose.samples, len(capture_poses))
