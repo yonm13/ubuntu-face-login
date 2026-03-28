@@ -124,7 +124,7 @@ info "Copied src/ to ${INSTALL_DIR}/src"
 # ---------------------------------------------------------------------------
 step "Creating virtual environment"
 
-$PYTHON -m venv "${VENV_DIR}"
+$PYTHON -m venv --system-site-packages "${VENV_DIR}"
 source "${VENV_DIR}/bin/activate"
 
 pip install --upgrade pip -q
