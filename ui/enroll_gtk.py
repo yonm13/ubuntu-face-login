@@ -325,7 +325,7 @@ class EnrollWindow(Gtk.ApplicationWindow):
             color = (0, 220, 0) if valid else (0, 60, 220)
             cv2.rectangle(display, (x, y), (x + w, y + h), color, 2)
             if landmarks is not None:
-                for pt in landmarks:
+                for pt in landmarks.values():
                     cv2.circle(display, (int(pt[0]), int(pt[1])), 2, color, -1)
 
         texture = _frame_to_texture(display)
