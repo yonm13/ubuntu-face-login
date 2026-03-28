@@ -98,6 +98,14 @@ def _section(title: str, child: Gtk.Widget) -> Gtk.Box:
     return box
 
 
+import re
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI color/bold escape sequences from text."""
+    return _ANSI_RE.sub('', text)
+
+
 def _scrolled_log() -> tuple[Gtk.ScrolledWindow, Gtk.TextView]:
     tv = Gtk.TextView()
     tv.set_editable(False)
@@ -113,7 +121,7 @@ def _scrolled_log() -> tuple[Gtk.ScrolledWindow, Gtk.TextView]:
 
 def _append_log(tv: Gtk.TextView, text: str) -> bool:
     buf = tv.get_buffer()
-    buf.insert(buf.get_end_iter(), text)
+    buf.insert(buf.get_end_iter(), _strip_ansi(text))
     # Scroll to end
     adj = tv.get_parent().get_vadjustment()
     if adj:
@@ -583,6 +591,100 @@ PAM_TARGETS = [
     ("polkit-1",     "GUI privilege dialogs (polkit)", False),
 ]
 
+
+# ── Page 5a: Safety check ────────────────────────────────────────────────────
+
+class SafetyPage(WizardPage):
+    title = "⚠ Safety Check"
+    subtitle = "Before we change login settings"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._confirmed = False
+
+        icon = Gtk.Image.new_from_icon_name("dialog-warning-symbolic")
+        icon.set_pixel_size(48)
+        icon.set_halign(Gtk.Align.CENTER)
+        self.append(icon)
+
+        warn = _label(
+            "The next step modifies PAM — the system that handles login "
+            "and sudo authentication.\n\n"
+            "If something goes wrong, you could be unable to sudo.\n"
+            "To protect yourself:",
+            wrap=True, align=Gtk.Align.CENTER
+        )
+        warn.set_justify(Gtk.Justification.CENTER)
+        self.append(warn)
+
+        # Instructions box
+        instructions = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        instructions.set_margin_top(12)
+        instructions.set_margin_start(32)
+        instructions.set_margin_end(32)
+        instructions.add_css_class("card")
+        instructions.set_margin_bottom(4)
+
+        step1 = _label(
+            "❶  Open a separate terminal window right now",
+            wrap=True, css="title-4"
+        )
+        step1.set_margin_top(12)
+        step1.set_margin_start(12)
+        step1.set_margin_end(12)
+        instructions.append(step1)
+
+        step2 = _label(
+            "❷  Run:  sudo -i",
+            wrap=True, css="title-4"
+        )
+        step2.set_margin_start(12)
+        step2.set_margin_end(12)
+        instructions.append(step2)
+
+        step3 = _label(
+            "❸  Leave that root shell open until setup is complete",
+            wrap=True, css="title-4"
+        )
+        step3.set_margin_start(12)
+        step3.set_margin_end(12)
+        step3.set_margin_bottom(12)
+        instructions.append(step3)
+
+        self.append(instructions)
+
+        why = _label(
+            "If PAM breaks, that root terminal lets you restore the backup:\n"
+            "  cp /etc/pam.d/sudo.ubuntu-face-login.bak /etc/pam.d/sudo",
+            wrap=True, css="dim-label"
+        )
+        why.set_margin_top(8)
+        self.append(why)
+
+        self.append(Gtk.Separator())
+
+        self._check = Gtk.CheckButton(
+            label="I have a root shell open in another terminal"
+        )
+        self._check.connect("toggled", self._on_toggle)
+        self._check.set_margin_top(8)
+        self._check.set_halign(Gtk.Align.CENTER)
+        self.append(self._check)
+
+    def on_enter(self, wizard: "SetupWizard") -> None:
+        wizard.set_can_advance(self._confirmed)
+
+    def _on_toggle(self, cb: Gtk.CheckButton) -> None:
+        self._confirmed = cb.get_active()
+        # Find the wizard — walk up the widget tree
+        parent = self.get_root()
+        if isinstance(parent, SetupWizard):
+            parent.set_can_advance(self._confirmed)
+
+    def can_advance(self) -> bool:
+        return self._confirmed
+
+
 class PamPage(WizardPage):
     title = "Enable Face Login"
     subtitle = "Choose where to enable face recognition"
@@ -791,7 +893,7 @@ class DonePage(WizardPage):
 
 # ── Wizard window ─────────────────────────────────────────────────────────────
 
-PAGES = [WelcomePage, InstallPage, EnrollPage, TestPage, PamPage, DonePage]
+PAGES = [WelcomePage, InstallPage, EnrollPage, TestPage, SafetyPage, PamPage, DonePage]
 
 
 class SetupWizard(Adw.ApplicationWindow):
