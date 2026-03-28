@@ -20,3 +20,4 @@ data/
 *.swp
 *~
 .DS_Store
+.venv2/

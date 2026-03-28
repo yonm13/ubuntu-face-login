@@ -133,6 +133,10 @@ def main() -> None:
         "--service", type=str, default="default",
         help="PAM service name for timeout lookup",
     )
+    parser.add_argument(
+        "--user", type=str, default=None,
+        help="PAM user (accepted for compatibility, not used for matching)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(

@@ -674,56 +674,64 @@ class PamPage(WizardPage):
         ).start()
 
     def _run_pam(self, targets: list[str], disable_howdy: bool) -> None:
-        # Build a non-interactive PAM setup using direct sed commands
-        # (setup-pam.sh is interactive; we drive it programmatically here)
-        lines = []
-        ok = True
-
+        # Batch all privileged operations into one script → one pkexec prompt
         pam_line = (
             "auth sufficient pam_python.so "
             "/opt/ubuntu-face-login/pam_face.py"
         )
 
-        def run_root(*cmd) -> tuple[bool, str]:
-            try:
-                r = subprocess.run(
-                    ["pkexec"] + list(cmd),
-                    capture_output=True, text=True
-                )
-                return r.returncode == 0, r.stdout + r.stderr
-            except Exception as exc:
-                return False, str(exc)
+        script_lines = ["#!/bin/bash", "set -e", ""]
 
         for target in targets:
             pam_file = f"/etc/pam.d/{target}"
-            # Backup
-            ok2, out = run_root("cp", pam_file, f"{pam_file}.ubuntu-face-login.bak")
-            lines.append(f"Backed up {pam_file}\n")
-
-            # Insert face auth line before @include common-auth
-            ok2, out = run_root(
-                "sed", "-i",
-                f"/@include common-auth/i {pam_line}",
-                pam_file,
-            )
-            if ok2:
-                lines.append(f"✓ Added face auth to {pam_file}\n")
-            else:
-                lines.append(f"✗ Failed on {pam_file}: {out}\n")
-                ok = False
+            bak_file = f"{pam_file}.ubuntu-face-login.bak"
+            script_lines += [
+                f'# --- {target} ---',
+                f'cp "{pam_file}" "{bak_file}"',
+                f'echo "Backed up {pam_file}"',
+                # Only add if not already present
+                f'if ! grep -q "ubuntu-face-login" "{pam_file}"; then',
+                f'  sed -i \'/@include common-auth/i {pam_line}\' "{pam_file}"',
+                f'  echo "✓ Added face auth to {pam_file}"',
+                f'else',
+                f'  echo "✓ Already configured: {pam_file}"',
+                f'fi',
+                '',
+            ]
 
         if disable_howdy:
-            ok2, out = run_root(
-                "sed", "-i",
-                r"s|^auth.*pam_python.so /lib/security/howdy/pam.py|#&|",
-                "/etc/pam.d/common-auth",
-            )
-            if ok2:
-                lines.append("✓ Disabled Howdy in common-auth\n")
-            else:
-                lines.append(f"✗ Failed to disable Howdy: {out}\n")
+            script_lines += [
+                '# --- disable howdy ---',
+                r"sed -i 's|^auth.*pam_python.so /lib/security/howdy/pam.py|#&|' /etc/pam.d/common-auth",
+                'echo "✓ Disabled Howdy in common-auth"',
+                '',
+            ]
 
-        GLib.idle_add(self._finish, ok, "".join(lines))
+        script = "\n".join(script_lines)
+
+        # Write temp script, run once with pkexec
+        import tempfile
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".sh", prefix="ufl-pam-", delete=False
+        ) as f:
+            f.write(script)
+            script_path = f.name
+
+        try:
+            os.chmod(script_path, 0o755)
+            proc = subprocess.run(
+                ["pkexec", "bash", script_path],
+                capture_output=True, text=True,
+            )
+            output = (proc.stdout + proc.stderr).strip()
+            ok = proc.returncode == 0
+        except Exception as exc:
+            output = str(exc)
+            ok = False
+        finally:
+            os.unlink(script_path)
+
+        GLib.idle_add(self._finish, ok, output)
 
     def _finish(self, ok: bool, log: str) -> bool:
         self._spinner.stop()
