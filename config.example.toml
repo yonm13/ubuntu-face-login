@@ -1,0 +1,96 @@
+# ubuntu-face-login configuration
+#
+# Place this file at:
+#   /etc/ubuntu-face-login/config.toml   (system-wide)
+#   ~/.config/ubuntu-face-login/config.toml  (per-user override)
+#
+# All values shown below are the built-in defaults.
+# Uncomment and change only what you need.
+
+# --------------------------------------------------------------------------
+# Camera settings
+# --------------------------------------------------------------------------
+[camera]
+
+# Device path, e.g. "/dev/video2".  Empty string = auto-detect.
+# device = ""
+
+# Camera type: "ir" for infrared, "rgb" for regular webcam.
+# IR cameras are preferred — they work in darkness and resist photo attacks.
+# Empty string = auto-detect based on device capabilities.
+# type = ""
+
+# Minimum average brightness (0-255) for an IR frame to be considered usable.
+# Frames below this are discarded (emitter may not have fired yet).
+# ir_brightness_threshold = 20
+
+# --------------------------------------------------------------------------
+# IR emitter control (linux-enable-ir-emitter)
+# --------------------------------------------------------------------------
+[emitter]
+
+# Whether to activate the IR emitter before capture.
+# Disable if your camera has a built-in always-on emitter, or if using RGB.
+# enabled = true
+
+# UVC unit and selector for the emitter control.
+# These values are hardware-specific; run `linux-enable-ir-emitter`
+# to auto-detect them for your device.
+# unit = 0
+# selector = 0
+
+# Raw UVC control data as hex string (e.g. "0x01 0x00 ...").
+# control_data = ""
+
+# --------------------------------------------------------------------------
+# Authentication
+# --------------------------------------------------------------------------
+[auth]
+
+# Maximum L2 distance between query embedding and stored embedding
+# for a match.  Lower = stricter.  0.45 is a good balance of security
+# and usability for FaceNet-512.
+# threshold = 0.45
+
+# Per-service timeout in seconds.  The authenticator will try for this
+# long before giving up.  Services not listed here use the "default" value.
+[auth.timeout]
+# sudo = 3
+# gdm-password = 5
+# polkit-1 = 5
+# default = 5
+
+# Maximum number of frames to process before giving up, regardless
+# of remaining timeout.  Prevents CPU spin on bad camera feeds.
+# max_attempts = 30
+
+# --------------------------------------------------------------------------
+# Face enrollment
+# --------------------------------------------------------------------------
+[enrollment]
+
+# Number of face samples to capture during enrollment.
+# More samples = better recognition but slower enrollment.
+# samples = 20
+
+# Minimum YuNet detection confidence to accept an enrollment sample.
+# Rejects blurry or partially-visible faces.
+# min_confidence = 0.6
+
+# --------------------------------------------------------------------------
+# Model paths
+# --------------------------------------------------------------------------
+[models]
+
+# Directory containing yunet.onnx and facenet512.onnx.
+# Defaults to <install_dir>/models.
+# dir = "/usr/share/ubuntu-face-login/models"
+
+# --------------------------------------------------------------------------
+# Data paths
+# --------------------------------------------------------------------------
+[data]
+
+# Directory containing per-user .npy embedding files.
+# Defaults to <install_dir>/data.
+# dir = "/usr/share/ubuntu-face-login/data"

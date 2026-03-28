@@ -1,0 +1,21 @@
+[project]
+name = "ubuntu-face-login"
+version = "0.1.0"
+description = "PAM face authentication for Ubuntu using IR cameras and FaceNet-512"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+
+[project.urls]
+Homepage = "https://github.com/YOUR_USER/ubuntu-face-login"
+Repository = "https://github.com/YOUR_USER/ubuntu-face-login"
+Issues = "https://github.com/YOUR_USER/ubuntu-face-login/issues"
+
+# Runtime dependencies (for reference — not pip-installable).
+# Installed via install.sh into an isolated venv at /opt/ubuntu-face-login/.venv
+#
+# [project.dependencies]
+# numpy
+# opencv-python-headless
+# onnxruntime
+# tomli  (Python < 3.11 only)

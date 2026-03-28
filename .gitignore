@@ -1,0 +1,22 @@
+# ONNX models (downloaded by install.sh)
+models/*.onnx
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Enrolled face data
+data/
+*.npy
+
+# GSD
+.gsd/
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
