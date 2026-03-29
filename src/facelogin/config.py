@@ -182,3 +182,18 @@ def get_config() -> FaceLoginConfig:
     if _config is None:
         _config = load_config()
     return _config
+
+
+if __name__ == "__main__":
+    import dataclasses
+    import json
+    import sys
+
+    cfg = get_config()
+
+    def _to_dict(obj):
+        if dataclasses.is_dataclass(obj):
+            return {k: _to_dict(v) for k, v in dataclasses.asdict(obj).items()}
+        return obj
+
+    print(json.dumps(_to_dict(cfg), indent=2))
