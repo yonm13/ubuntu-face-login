@@ -83,6 +83,13 @@ def authenticate(
     start = time.monotonic()
     frame = first_frame
 
+    # Rolling accumulator for temporal averaging.
+    # Averaging embeddings from the last few valid frames smooths out
+    # per-frame noise (motion blur, emitter flicker, slight pose change).
+    _ACCUM_SIZE = 3
+    accumulated: list[np.ndarray] = []
+    best_dist_seen = float("inf")
+
     try:
         while time.monotonic() - start < timeout:
             box, landmarks, confidence = detect_face(frame)
@@ -90,14 +97,32 @@ def authenticate(
             if confidence is not None and confidence >= config.enrollment.min_confidence:
                 valid, reason = validate_liveness(box, landmarks, frame.shape)
                 if valid:
-                    face_crop = crop_face(frame, box)
+                    # Aligned crop uses eye landmarks to correct roll + scale
+                    face_crop = crop_face(frame, box, landmarks=landmarks)
                     emb = get_embedding(face_crop)
-                    user_id, dist = db.match(emb, threshold=threshold)
+
+                    # Maintain a rolling window of recent embeddings
+                    accumulated.append(emb)
+                    if len(accumulated) > _ACCUM_SIZE:
+                        accumulated.pop(0)
+
+                    # Prefer the temporal average when we have ≥2 frames —
+                    # averaging cancels per-frame noise and produces a more
+                    # stable embedding than any single frame.
+                    query_emb = (
+                        np.mean(accumulated, axis=0)
+                        if len(accumulated) >= 2
+                        else emb
+                    )
+
+                    user_id, dist = db.match(query_emb, threshold=threshold)
+                    if dist < best_dist_seen:
+                        best_dist_seen = dist
 
                     if user_id is not None:
                         logger.info(
-                            "Authenticated as %s (dist=%.3f, service=%s)",
-                            user_id, dist, pam_service,
+                            "Authenticated as %s (dist=%.3f, frames_avg=%d, service=%s)",
+                            user_id, dist, len(accumulated), pam_service,
                         )
                         return user_id
                 else:
@@ -114,8 +139,11 @@ def authenticate(
         camera.release()
 
     logger.info(
-        "Authentication failed after %.1fs (service=%s)",
-        time.monotonic() - start, pam_service,
+        "Authentication failed after %.1fs (best_dist=%.3f, threshold=%.3f, service=%s)",
+        time.monotonic() - start,
+        best_dist_seen,
+        threshold if threshold is not None else get_config().auth.threshold,
+        pam_service,
     )
     return None
 

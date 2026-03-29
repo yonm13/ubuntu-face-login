@@ -218,7 +218,7 @@ def enroll_user(
 
                     now = time.monotonic()
                     if valid and (now - last_saved_time) >= sample_delay:
-                        face_crop = crop_face(frame, box)
+                        face_crop = crop_face(frame, box, landmarks=landmarks)
                         emb = get_embedding(face_crop)
 
                         idx = start_index + saved
@@ -261,7 +261,7 @@ def enroll_user(
 
                 now = time.monotonic()
                 if valid and (now - last_saved_time) >= sample_delay:
-                    face_crop = crop_face(frame, box)
+                    face_crop = crop_face(frame, box, landmarks=landmarks)
                     emb = get_embedding(face_crop)
 
                     idx = start_index + saved
