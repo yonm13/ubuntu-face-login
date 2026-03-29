@@ -130,20 +130,20 @@ Key settings:
 
 ### Per-service thresholds and timeouts
 
-The setup wizard lets you configure both timeout and threshold independently per PAM service. Defaults are deliberately tighter for `sudo` than for the login screen:
+The setup wizard lets you configure both timeout and threshold independently per PAM service. The login screen uses a **stricter** threshold than `sudo` — it's the front door to the system, while `sudo` is used in an already-authenticated session:
 
 | Service | Default timeout | Default threshold | Rationale |
 |---------|----------------|-------------------|-----------|
-| sudo | 2s | 0.40 | Stricter — called frequently, needs to be fast and secure |
-| sudo-i | 2s | 0.40 | Same |
-| gdm-password | 5s | 0.50 | More lenient — you're sitting at your own screen |
+| gdm-password | 5s | 0.40 | **Strictest** — front door to the system |
 | polkit-1 | 5s | 0.45 | Middle ground |
+| sudo | 2s | 0.50 | More lenient — already logged in, called frequently |
+| sudo-i | 2s | 0.50 | Same |
 
 These values are written directly into the PAM config line as `timeout=N threshold=X` and override the global config at auth time.
 
 ### Adjusting the threshold
 
-The default threshold of `0.45` balances security and usability for FaceNet-512 embeddings. If you're getting false rejections, raise it to `0.50`–`0.55`. If you're concerned about false accepts (especially with RGB cameras), lower it to `0.40`.
+The global `auth.threshold` (default `0.45`) is the fallback when no per-service threshold is set in the PAM line. Per-service values (set by the wizard) take precedence. If you're getting false rejections, raise the relevant service threshold by 0.05. If you're concerned about false accepts (especially with RGB cameras), lower it.
 
 The matcher uses a top-K average strategy: it averages the L2 distances to your 5 closest enrolled embeddings, which smooths out outlier samples.
 

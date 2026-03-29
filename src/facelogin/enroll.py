@@ -89,6 +89,7 @@ def enroll_user(
     poses: Optional[List[Pose]] = None,
     sample_delay: float = 0.6,
     pose_transition_delay: float = 3.0,
+    wipe_existing: bool = False,
     on_sample: Optional[OnSampleCallback] = None,
     on_frame: Optional[OnFrameCallback] = None,
     on_pose: Optional[OnPoseCallback] = None,
@@ -121,6 +122,10 @@ def enroll_user(
         Seconds to pause between poses so the user can reposition.
         A per-second countdown fires ``on_pose_transition`` during the gap.
         Default 3.0 s.
+    wipe_existing:
+        When ``True``, delete all previously saved embeddings and face
+        thumbnails for *user_id* before capturing new samples.  Use for
+        a full re-enroll.  Default ``False`` (append to existing).
     on_sample:
         Called after each valid sample is saved: ``(index, total)``.
     on_frame:
@@ -161,6 +166,17 @@ def enroll_user(
     faces_dir = os.path.join(data_dir, "faces")
     os.makedirs(data_dir, exist_ok=True)
     os.makedirs(faces_dir, exist_ok=True)
+
+    # Optionally wipe existing samples for this user
+    if wipe_existing:
+        for fname in os.listdir(data_dir):
+            if fname.startswith(f"{user_id}_") and fname.endswith(".npy"):
+                os.remove(os.path.join(data_dir, fname))
+        thumb_dir = os.path.join(data_dir, "faces")
+        if os.path.isdir(thumb_dir):
+            for fname in os.listdir(thumb_dir):
+                if fname.startswith(f"{user_id}_"):
+                    os.remove(os.path.join(thumb_dir, fname))
 
     # Find next available index (don't overwrite existing embeddings)
     existing = [

@@ -18,7 +18,9 @@ from __future__ import annotations
 import argparse
 import copy
 import getpass
+import glob
 import logging
+import os
 import sys
 import threading
 from typing import List, Optional
@@ -161,7 +163,7 @@ class EnrollWindow(Gtk.ApplicationWindow):
 
     def __init__(self, app: Gtk.Application, user_id: str) -> None:
         super().__init__(application=app, title="Ubuntu Face Login — Enrollment")
-        self.set_default_size(700, 660)
+        self.set_default_size(700, 680)
 
         self._user_id = user_id
         self._poses: List[Pose] = [copy.copy(p) for p in DEFAULT_POSES]
@@ -172,6 +174,7 @@ class EnrollWindow(Gtk.ApplicationWindow):
         self._enroll_thread: Optional[threading.Thread] = None
 
         self._build_ui()
+        self._refresh_existing()  # populate existing-sample banner on open
 
     # ------------------------------------------------------------------
     # UI construction
@@ -219,6 +222,28 @@ class EnrollWindow(Gtk.ApplicationWindow):
         status_box.append(self._lbl_liveness)
         status_box.append(self._lbl_confidence)
         root.append(status_box)
+
+        # --- Existing-samples banner (hidden until samples found) ---
+        self._banner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self._banner.set_margin_top(8)
+        self._banner.set_margin_start(8)
+        self._banner.set_margin_end(8)
+        _css(self._banner, "card")
+
+        self._lbl_existing = Gtk.Label()
+        self._lbl_existing.set_halign(Gtk.Align.START)
+        self._lbl_existing.set_hexpand(True)
+        self._lbl_existing.add_css_class("caption")
+        self._banner.append(self._lbl_existing)
+
+        self._btn_reenroll = Gtk.Button(label="Re-enroll from scratch")
+        self._btn_reenroll.add_css_class("destructive-action")
+        self._btn_reenroll.add_css_class("flat")
+        self._btn_reenroll.connect("clicked", self._on_reenroll_clicked)
+        self._banner.append(self._btn_reenroll)
+
+        self._banner.set_visible(False)
+        root.append(self._banner)
 
         # --- Progress ---
         prog_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -292,20 +317,75 @@ class EnrollWindow(Gtk.ApplicationWindow):
                 self._lbl_status.set_text(
                     f"User: {uid}  |  {self._total_samples} samples  |  delay {delay:.1f}s"
                 )
+                self._refresh_existing()
             d.destroy()
 
         dlg.connect("response", on_response)
 
+    # ------------------------------------------------------------------
+    # Existing-sample helpers
+    # ------------------------------------------------------------------
+
+    def _count_existing(self) -> int:
+        """Return the number of .npy embeddings already saved for this user."""
+        data_dir = get_config().data.dir
+        if not os.path.isdir(data_dir):
+            return 0
+        return len(glob.glob(os.path.join(data_dir, f"{self._user_id}_*.npy")))
+
+    def _refresh_existing(self) -> None:
+        """Update the existing-samples banner for the current user."""
+        n = self._count_existing()
+        if n > 0:
+            self._lbl_existing.set_text(
+                f"ℹ  {n} sample{'s' if n != 1 else ''} already enrolled for "
+                f"'{self._user_id}' — clicking Start will add more."
+            )
+            self._btn_start.set_label("Add samples")
+            self._banner.set_visible(True)
+        else:
+            self._btn_start.set_label("Start")
+            self._banner.set_visible(False)
+
+    def _on_reenroll_clicked(self, _btn: Gtk.Button) -> None:
+        """Ask for confirmation then wipe existing samples and re-enroll."""
+        dlg = Gtk.MessageDialog(
+            transient_for=self,
+            modal=True,
+            message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.OK_CANCEL,
+            text=f"Delete all existing samples for '{self._user_id}'?",
+        )
+        dlg.format_secondary_text(
+            "This will permanently remove the currently enrolled face data "
+            "and capture a fresh set of samples. You cannot undo this."
+        )
+        dlg.connect("response", self._on_reenroll_confirm)
+        dlg.present()
+
+    def _on_reenroll_confirm(self, dlg: Gtk.MessageDialog, response: int) -> None:
+        dlg.destroy()
+        if response != Gtk.ResponseType.OK:
+            return
+        self._wipe_and_start()
+
     def _on_start_clicked(self, _btn: Gtk.Button) -> None:
+        self._start_enrollment(wipe_existing=False)
+
+    def _wipe_and_start(self) -> None:
+        self._start_enrollment(wipe_existing=True)
+
+    def _start_enrollment(self, wipe_existing: bool = False) -> None:
         self._running = True
         self._btn_start.set_sensitive(False)
         self._btn_settings.set_sensitive(False)
         self._btn_cancel.set_sensitive(True)
+        self._banner.set_visible(False)
         self._progress.set_fraction(0.0)
         self._lbl_progress_text.set_text(f"0 / {self._total_samples} samples")
         self._lbl_status.set_text("Starting camera…")
         self._enroll_thread = threading.Thread(
-            target=self._run_enrollment, daemon=True
+            target=self._run_enrollment, args=(wipe_existing,), daemon=True
         )
         self._enroll_thread.start()
 
@@ -383,6 +463,7 @@ class EnrollWindow(Gtk.ApplicationWindow):
         self._btn_start.set_sensitive(True)
         self._btn_settings.set_sensitive(True)
         self._btn_cancel.set_sensitive(False)
+        self._refresh_existing()
 
         if saved >= self._total_samples:
             self._lbl_pose.set_text("Enrollment complete! ✓")
@@ -425,12 +506,13 @@ class EnrollWindow(Gtk.ApplicationWindow):
             raise KeyboardInterrupt("Cancelled by user")
         self._on_frame(frame, box, landmarks, confidence, valid, reason)
 
-    def _run_enrollment(self) -> None:
+    def _run_enrollment(self, wipe_existing: bool = False) -> None:
         try:
             saved = enroll_user(
                 user_id=self._user_id,
                 poses=self._poses,
                 sample_delay=self._sample_delay,
+                wipe_existing=wipe_existing,
                 on_frame=self._on_frame_guard,
                 on_sample=self._on_sample,
                 on_pose=self._on_pose,

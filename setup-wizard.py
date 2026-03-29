@@ -586,9 +586,9 @@ class TestPage(WizardPage):
 
 PAM_TARGETS = [
     #  key             label                                     default_on  default_timeout  default_threshold
-    ("sudo",         "sudo (terminal privilege escalation)",      True,       2,               0.40),
-    ("sudo-i",       "sudo -i (root shell)",                     True,       2,               0.40),
-    ("gdm-password", "Login screen and lock screen",             True,       5,               0.50),
+    ("sudo",         "sudo (terminal privilege escalation)",      True,       2,               0.50),
+    ("sudo-i",       "sudo -i (root shell)",                     True,       2,               0.50),
+    ("gdm-password", "Login screen and lock screen",             True,       5,               0.40),
     ("polkit-1",     "GUI privilege dialogs (polkit)",            False,      5,               0.45),
 ]
 
