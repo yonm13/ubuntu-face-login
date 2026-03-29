@@ -298,3 +298,14 @@ class Camera:
             f"No bright frame from {self.device} after {max_attempts} attempts "
             f"(threshold={self.brightness_threshold})"
         )
+
+
+if __name__ == "__main__":
+    import sys
+    logging.basicConfig(level=logging.WARNING)
+    cameras = detect_cameras()
+    if not cameras:
+        print("No cameras detected.")
+        sys.exit(1)
+    for cam in cameras:
+        print(f"{cam.device}  type={cam.type}  formats={','.join(cam.formats)}  name={cam.name!r}")
