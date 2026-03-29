@@ -45,6 +45,17 @@ def _parse_timeout(argv: list[str]) -> int | None:
     return None
 
 
+def _parse_threshold(argv: list[str]) -> float | None:
+    """Extract threshold=X from PAM argv, or None if not present."""
+    for arg in argv:
+        if arg.startswith("threshold="):
+            try:
+                return float(arg.split("=", 1)[1])
+            except (ValueError, IndexError):
+                pass
+    return None
+
+
 def _get_service(pamh) -> str:
     """Read the PAM service name from the handle, with safe fallback."""
     try:
@@ -60,17 +71,20 @@ def pam_sm_authenticate(pamh, flags, argv):
     on exit code 0, PAM_AUTH_ERR otherwise.
     """
     timeout = _parse_timeout(argv)
+    threshold = _parse_threshold(argv)
     service = _get_service(pamh)
 
     cmd = [_AUTH_BINARY, "auth"]
     if timeout is not None:
         cmd.extend(["--timeout", str(timeout)])
+    if threshold is not None:
+        cmd.extend(["--threshold", str(threshold)])
     cmd.extend(["--service", service])
 
     script_timeout = timeout if timeout is not None else 10
     subprocess_timeout = script_timeout + _SAFETY_MARGIN
 
-    _log(syslog.LOG_INFO, f"Starting auth for service={service} timeout={script_timeout}")
+    _log(syslog.LOG_INFO, f"Starting auth for service={service} timeout={script_timeout} threshold={threshold}")
 
     try:
         result = subprocess.run(

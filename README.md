@@ -59,9 +59,16 @@ Both models run via ONNX Runtime on CPU. YuNet detection takes ~5ms, FaceNet-512
 
 ```bash
 # Clone
-git clone https://github.com/YOUR_USER/ubuntu-face-login.git
+git clone https://github.com/yonm13/ubuntu-face-login.git
 cd ubuntu-face-login
 
+# Run the setup wizard (recommended — installs, enrolls, and configures PAM)
+python3 setup-wizard.py
+```
+
+Or manually:
+
+```bash
 # Install (downloads models, creates venv, sets up wrapper)
 sudo ./install.sh
 
@@ -77,7 +84,17 @@ sudo bash scripts/setup-pam.sh
 
 The PAM setup script walks you through each step, asks you to verify `sudo whoami` works in another terminal, and offers to enable face auth for GDM login and polkit prompts too.
 
-### Install with GUI enrollment
+### Setup wizard
+
+The recommended way to set up ubuntu-face-login is the GTK4 wizard:
+
+```bash
+python3 setup-wizard.py
+```
+
+It guides you through installation, live-camera face enrollment, an authentication test, and PAM configuration — all in one window. Per-service timeouts and match thresholds are configurable from the UI before applying.
+
+### Install with GUI enrollment only
 
 ```bash
 sudo ./install.sh --with-gui
@@ -110,6 +127,19 @@ Key settings:
 | `auth.timeout.gdm-password` | `5` | Seconds before face auth gives up at login screen |
 | `enrollment.samples` | `20` | Number of face captures during enrollment |
 | `enrollment.min_confidence` | `0.6` | Minimum YuNet confidence to accept a sample |
+
+### Per-service thresholds and timeouts
+
+The setup wizard lets you configure both timeout and threshold independently per PAM service. Defaults are deliberately tighter for `sudo` than for the login screen:
+
+| Service | Default timeout | Default threshold | Rationale |
+|---------|----------------|-------------------|-----------|
+| sudo | 2s | 0.40 | Stricter — called frequently, needs to be fast and secure |
+| sudo-i | 2s | 0.40 | Same |
+| gdm-password | 5s | 0.50 | More lenient — you're sitting at your own screen |
+| polkit-1 | 5s | 0.45 | Middle ground |
+
+These values are written directly into the PAM config line as `timeout=N threshold=X` and override the global config at auth time.
 
 ### Adjusting the threshold
 
@@ -272,26 +302,29 @@ The `setup-pam.sh` script will offer to comment out howdy's PAM lines if both ar
 ## Project structure
 
 ```
-├── install.sh              # Main installer
+├── install.sh              # Main installer (run via pkexec from wizard or sudo directly)
 ├── uninstall.sh            # Clean removal
+├── setup-wizard.py         # GTK4 setup wizard (install + enroll + PAM config in one UI)
 ├── config.example.toml     # Annotated default configuration
 ├── scripts/
-│   ├── setup-pam.sh        # Interactive PAM configuration
+│   ├── setup-pam.sh        # Interactive PAM configuration (CLI alternative to wizard)
 │   ├── export-onnx.py      # Export FaceNet to ONNX (development)
 │   └── convert-embeddings.py
 ├── src/facelogin/
-│   ├── auth.py             # Authentication orchestrator
+│   ├── auth.py             # Authentication orchestrator + CLI (--timeout, --threshold, --service)
 │   ├── camera.py           # V4L2 camera detection and capture
 │   ├── config.py           # TOML config loader
 │   ├── detector.py         # YuNet face detection + liveness
 │   ├── embedder.py         # FaceNet-512 ONNX inference
 │   ├── emitter.py          # IR emitter activation (UVC ioctl)
-│   ├── enroll.py           # Face enrollment
+│   ├── enroll.py           # Pose-guided face enrollment
 │   ├── matcher.py          # Embedding database + L2 matching
-│   └── pam_module.py       # PAM bridge
-└── models/
-    ├── yunet.onnx          # YuNet face detector
-    └── facenet512.onnx     # FaceNet-512 embedder
+│   └── pam_module.py       # PAM bridge (parses timeout= and threshold= from PAM config line)
+├── ui/
+│   └── enroll_gtk.py       # Standalone GTK4 enrollment window (re-enrollment without full wizard)
+└── models/                 # Downloaded by install.sh — not in repo
+    ├── yunet.onnx
+    └── facenet512.onnx
 ```
 
 ## Contributing
@@ -300,13 +333,13 @@ Contributions welcome. The codebase is straightforward Python — no framework, 
 
 Areas that would benefit from help:
 - Testing on more laptop IR cameras (especially non-ThinkPad)
-- GTK4 enrollment UI with live camera preview
 - Multi-face rejection (currently picks highest-confidence face)
 - Encrypted embedding storage
+- `--re-enroll` flag to clear old samples before capturing new ones
 
 ```bash
 # Development setup
-git clone https://github.com/YOUR_USER/ubuntu-face-login.git
+git clone https://github.com/yonm13/ubuntu-face-login.git
 cd ubuntu-face-login
 python3 -m venv .venv
 source .venv/bin/activate
@@ -317,4 +350,4 @@ pip install numpy opencv-python-headless onnxruntime
 
 MIT — see [LICENSE](LICENSE).
 
-Copyright 2025.
+Copyright 2025–2026.

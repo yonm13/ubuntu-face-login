@@ -585,10 +585,11 @@ class TestPage(WizardPage):
 # ── Page 5: PAM Setup ─────────────────────────────────────────────────────────
 
 PAM_TARGETS = [
-    ("sudo",         "sudo (terminal privilege escalation)", True),
-    ("sudo-i",       "sudo -i (root shell)", True),
-    ("gdm-password", "Login screen and lock screen", True),
-    ("polkit-1",     "GUI privilege dialogs (polkit)", False),
+    #  key             label                                     default_on  default_timeout  default_threshold
+    ("sudo",         "sudo (terminal privilege escalation)",      True,       2,               0.40),
+    ("sudo-i",       "sudo -i (root shell)",                     True,       2,               0.40),
+    ("gdm-password", "Login screen and lock screen",             True,       5,               0.50),
+    ("polkit-1",     "GUI privilege dialogs (polkit)",            False,      5,               0.45),
 ]
 
 
@@ -703,15 +704,65 @@ class PamPage(WizardPage):
 
         self.append(Gtk.Separator())
 
-        # Checkboxes
-        check_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        # Per-target rows: checkbox + timeout spinner + threshold spinner
+        grid = Gtk.Grid(column_spacing=12, row_spacing=8)
+        grid.set_margin_top(4)
+
+        # Header row
+        hdr_enable = _label("Enable", css="dim-label")
+        hdr_enable.set_halign(Gtk.Align.START)
+        grid.attach(hdr_enable, 0, 0, 1, 1)
+        hdr_service = _label("Service", css="dim-label")
+        hdr_service.set_halign(Gtk.Align.START)
+        hdr_service.set_hexpand(True)
+        grid.attach(hdr_service, 1, 0, 1, 1)
+        hdr_timeout = _label("Timeout (s)", css="dim-label")
+        hdr_timeout.set_halign(Gtk.Align.CENTER)
+        grid.attach(hdr_timeout, 2, 0, 1, 1)
+        hdr_threshold = _label("Threshold", css="dim-label")
+        hdr_threshold.set_halign(Gtk.Align.CENTER)
+        grid.attach(hdr_threshold, 3, 0, 1, 1)
+        hdr_threshold_tip = _label("↓ stricter", css="dim-label")
+        hdr_threshold_tip.set_halign(Gtk.Align.START)
+        grid.attach(hdr_threshold_tip, 4, 0, 1, 1)
+
         self._checks: dict[str, Gtk.CheckButton] = {}
-        for key, label, default in PAM_TARGETS:
-            cb = Gtk.CheckButton(label=label)
-            cb.set_active(default)
+        self._timeouts: dict[str, Gtk.SpinButton] = {}
+        self._thresholds: dict[str, Gtk.SpinButton] = {}
+        for row_idx, (key, label, default_on, default_timeout, default_threshold) in enumerate(PAM_TARGETS, start=1):
+            cb = Gtk.CheckButton()
+            cb.set_active(default_on)
             self._checks[key] = cb
-            check_box.append(cb)
-        self.append(_section("Enable for:", check_box))
+            grid.attach(cb, 0, row_idx, 1, 1)
+
+            lbl = Gtk.Label(label=label)
+            lbl.set_halign(Gtk.Align.START)
+            lbl.set_hexpand(True)
+            grid.attach(lbl, 1, row_idx, 1, 1)
+
+            spin_t = Gtk.SpinButton.new_with_range(1, 15, 1)
+            spin_t.set_value(default_timeout)
+            self._timeouts[key] = spin_t
+            grid.attach(spin_t, 2, row_idx, 1, 1)
+
+            spin_th = Gtk.SpinButton.new_with_range(0.25, 0.70, 0.05)
+            spin_th.set_value(default_threshold)
+            spin_th.set_digits(2)
+            self._thresholds[key] = spin_th
+            grid.attach(spin_th, 3, row_idx, 1, 1)
+
+            # Disable spinners when checkbox is off
+            spin_t.set_sensitive(default_on)
+            spin_th.set_sensitive(default_on)
+            cb.connect(
+                "toggled",
+                lambda c, st=spin_t, sth=spin_th: (
+                    st.set_sensitive(c.get_active()),
+                    sth.set_sensitive(c.get_active()),
+                )
+            )
+
+        self.append(_section("Services:", grid))
 
         # Howdy warning
         self._howdy_row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -764,7 +815,10 @@ class PamPage(WizardPage):
             pass
 
     def _on_apply(self, _btn: Gtk.Button) -> None:
-        targets = [k for k, cb in self._checks.items() if cb.get_active()]
+        targets = [
+            (k, int(self._timeouts[k].get_value()), round(self._thresholds[k].get_value(), 2))
+            for k, cb in self._checks.items() if cb.get_active()
+        ]
         disable_howdy = (
             self._howdy_row.get_visible() and self._howdy_check.get_active()
         )
@@ -775,16 +829,15 @@ class PamPage(WizardPage):
             target=self._run_pam, args=(targets, disable_howdy), daemon=True
         ).start()
 
-    def _run_pam(self, targets: list[str], disable_howdy: bool) -> None:
+    def _run_pam(self, targets: list[tuple[str, int, float]], disable_howdy: bool) -> None:
         # Batch all privileged operations into one script → one pkexec prompt
-        pam_line = (
-            "auth sufficient pam_python.so "
-            "/opt/ubuntu-face-login/pam_face.py"
-        )
-
         script_lines = ["#!/bin/bash", "set -e", ""]
 
-        for target in targets:
+        for target, timeout, threshold in targets:
+            pam_line = (
+                "auth sufficient pam_python.so "
+                f"/opt/ubuntu-face-login/pam_face.py timeout={timeout} threshold={threshold}"
+            )
             pam_file = f"/etc/pam.d/{target}"
             bak_file = f"{pam_file}.ubuntu-face-login.bak"
             script_lines += [
@@ -796,7 +849,9 @@ class PamPage(WizardPage):
                 f'  sed -i \'/@include common-auth/i {pam_line}\' "{pam_file}"',
                 f'  echo "✓ Added face auth to {pam_file}"',
                 f'else',
-                f'  echo "✓ Already configured: {pam_file}"',
+                f'  # Update existing line with new timeout/threshold values',
+                f'  sed -i \'s|auth sufficient pam_python.so /opt/ubuntu-face-login/pam_face.py.*|{pam_line}|\' "{pam_file}"',
+                f'  echo "✓ Updated face auth config in {pam_file}"',
                 f'fi',
                 '',
             ]

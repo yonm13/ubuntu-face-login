@@ -88,7 +88,7 @@ WRAPPER="/usr/local/bin/ubuntu-face-login"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Model URLs and checksums
-FACENET_URL="https://github.com/USER/ubuntu-face-login/releases/download/v0.1.0/facenet512.onnx"
+FACENET_URL="https://github.com/yonm13/ubuntu-face-login/releases/download/v0.1.0/facenet512.onnx"
 FACENET_SHA256="9a3ac09681674392ffd739e6c456811c3c05ef87d7b3e4ecfe7d5b50fb077a96"
 
 YUNET_URL="https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx"
@@ -196,13 +196,26 @@ fi
 # Data directory
 # ---------------------------------------------------------------------------
 mkdir -p "${DATA_DIR}"
+mkdir -p "${DATA_DIR}/faces"
 chmod 755 "${DATA_DIR}"
-# Give the calling user write access so GUI enrollment works without root
+chmod 755 "${DATA_DIR}/faces"
+
+# Determine the real calling user.
+# - sudo sets SUDO_USER
+# - pkexec sets PKEXEC_UID (used when wizard calls pkexec bash install.sh)
+REAL_USER=""
 if [[ -n "${SUDO_USER:-}" ]]; then
-    chown "${SUDO_USER}:${SUDO_USER}" "${DATA_DIR}"
-    info "Data directory owned by ${SUDO_USER}: ${DATA_DIR}"
+    REAL_USER="${SUDO_USER}"
+elif [[ -n "${PKEXEC_UID:-}" ]]; then
+    REAL_USER=$(id -un "${PKEXEC_UID}" 2>/dev/null || true)
+fi
+
+if [[ -n "${REAL_USER}" ]]; then
+    chown -R "${REAL_USER}:${REAL_USER}" "${DATA_DIR}"
+    info "Data directory owned by ${REAL_USER}: ${DATA_DIR}"
 else
-    info "Data directory: ${DATA_DIR}"
+    warn "Could not determine calling user — data directory owned by root."
+    warn "Fix manually: sudo chown -R \$(whoami):\$(whoami) ${DATA_DIR}"
 fi
 
 # ---------------------------------------------------------------------------

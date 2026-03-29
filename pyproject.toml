@@ -7,9 +7,9 @@ license = "MIT"
 requires-python = ">=3.10"
 
 [project.urls]
-Homepage = "https://github.com/YOUR_USER/ubuntu-face-login"
-Repository = "https://github.com/YOUR_USER/ubuntu-face-login"
-Issues = "https://github.com/YOUR_USER/ubuntu-face-login/issues"
+Homepage = "https://github.com/yonm13/ubuntu-face-login"
+Repository = "https://github.com/yonm13/ubuntu-face-login"
+Issues = "https://github.com/yonm13/ubuntu-face-login/issues"
 
 # Runtime dependencies (for reference — not pip-installable).
 # Installed via install.sh into an isolated venv at /opt/ubuntu-face-login/.venv

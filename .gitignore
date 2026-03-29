@@ -11,8 +11,9 @@ __pycache__/
 data/
 *.npy
 
-# GSD
+# GSD / pi agent
 .gsd/
+.bg-shell/
 
 # Editor / OS
 .idea/

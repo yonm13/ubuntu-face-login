@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 def authenticate(
     timeout: Optional[int] = None,
+    threshold: Optional[float] = None,
     pam_service: str = "default",
 ) -> Optional[str]:
     """Run the face-auth pipeline and return the matched user_id or None.
@@ -42,6 +43,9 @@ def authenticate(
         Maximum seconds to attempt authentication.  When *None*, looked
         up from ``config.auth.timeout[pam_service]`` (falling back to
         the ``"default"`` key).
+    threshold:
+        Maximum L2 distance to accept as a match.  Lower values are
+        stricter.  When *None*, falls back to ``config.auth.threshold``.
     pam_service:
         PAM service name (e.g. ``"sudo"``, ``"gdm-password"``).  Used
         to select the per-service timeout from config.
@@ -88,7 +92,7 @@ def authenticate(
                 if valid:
                     face_crop = crop_face(frame, box)
                     emb = get_embedding(face_crop)
-                    user_id, dist = db.match(emb)
+                    user_id, dist = db.match(emb, threshold=threshold)
 
                     if user_id is not None:
                         logger.info(
@@ -130,6 +134,10 @@ def main() -> None:
         help="Max seconds to attempt auth (default: from config)",
     )
     parser.add_argument(
+        "--threshold", type=float, default=None,
+        help="Max L2 distance to accept as a match (lower = stricter; default: from config)",
+    )
+    parser.add_argument(
         "--service", type=str, default="default",
         help="PAM service name for timeout lookup",
     )
@@ -144,7 +152,7 @@ def main() -> None:
         format="%(levelname)s %(name)s: %(message)s",
     )
 
-    user = authenticate(timeout=args.timeout, pam_service=args.service)
+    user = authenticate(timeout=args.timeout, threshold=args.threshold, pam_service=args.service)
     if user:
         print(f"✅ {user}", flush=True)
         sys.exit(0)
