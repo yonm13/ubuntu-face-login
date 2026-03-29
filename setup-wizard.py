@@ -312,6 +312,7 @@ class EnrollPage(WizardPage):
 
     def on_enter(self, wizard: "SetupWizard") -> None:
         if self._camera_widget_built:
+            self._refresh_existing()
             return
         try:
             self._build_camera_widget(wizard)
@@ -325,6 +326,7 @@ class EnrollPage(WizardPage):
         from facelogin.enroll import DEFAULT_POSES, enroll_user
         from facelogin.config import get_config
         import copy
+        import glob
         import cv2
         import numpy as np
 
@@ -336,6 +338,7 @@ class EnrollPage(WizardPage):
         self._sample_delay = 0.4
 
         cfg = get_config()
+        self._data_dir = cfg.data.dir
         self._user_id = getpass.getuser()
 
         # Camera feed
@@ -364,6 +367,21 @@ class EnrollPage(WizardPage):
         self._progress.set_text(f"0 / {self._total} samples")
         self._enroll_container.append(self._progress)
 
+        # Existing-samples banner (hidden until samples found)
+        self._banner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self._banner.set_margin_top(2)
+        self._lbl_existing = _label("", css="caption")
+        self._lbl_existing.set_hexpand(True)
+        self._lbl_existing.set_halign(Gtk.Align.START)
+        self._banner.append(self._lbl_existing)
+        self._btn_reenroll = Gtk.Button(label="Re-enroll from scratch")
+        self._btn_reenroll.add_css_class("destructive-action")
+        self._btn_reenroll.add_css_class("flat")
+        self._btn_reenroll.connect("clicked", self._on_reenroll_clicked)
+        self._banner.append(self._btn_reenroll)
+        self._banner.set_visible(False)
+        self._enroll_container.append(self._banner)
+
         # Buttons
         btn_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         btn_row.set_halign(Gtk.Align.CENTER)
@@ -381,30 +399,81 @@ class EnrollPage(WizardPage):
         self._enroll_container.append(btn_row)
 
         self._camera_widget_built = True
+        self._refresh_existing()
+
+    def _count_existing(self) -> int:
+        import glob
+        if not os.path.isdir(self._data_dir):
+            return 0
+        return len(glob.glob(
+            os.path.join(self._data_dir, f"{self._user_id}_*.npy")
+        ))
+
+    def _refresh_existing(self) -> None:
+        if not self._camera_widget_built:
+            return
+        n = self._count_existing()
+        if n > 0:
+            self._lbl_existing.set_text(
+                f"ℹ  {n} sample{'s' if n != 1 else ''} already enrolled — "
+                "clicking Start will add more."
+            )
+            self._btn_start.set_label("Add samples")
+            self._banner.set_visible(True)
+        else:
+            self._btn_start.set_label("Start")
+            self._banner.set_visible(False)
+
+    def _on_reenroll_clicked(self, _btn: Gtk.Button) -> None:
+        dlg = Gtk.MessageDialog(
+            transient_for=self.get_root(),
+            modal=True,
+            message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.OK_CANCEL,
+            text=f"Delete all existing samples for '{self._user_id}'?",
+        )
+        dlg.format_secondary_text(
+            "This will permanently remove the currently enrolled face data "
+            "and capture a fresh set of samples. You cannot undo this."
+        )
+        dlg.connect("response", self._on_reenroll_confirm)
+        dlg.present()
+
+    def _on_reenroll_confirm(self, dlg, response: int) -> None:
+        dlg.destroy()
+        if response == Gtk.ResponseType.OK:
+            self._start_run(wipe_existing=True)
 
     # Enrollment thread callbacks
     def _on_start(self, _btn: Gtk.Button) -> None:
+        self._start_run(wipe_existing=False)
+
+    def _start_run(self, wipe_existing: bool = False) -> None:
         from facelogin.enroll import enroll_user
         self._running = True
         self._saved = 0
         self._enrolled = False
         self._btn_start.set_sensitive(False)
         self._btn_stop.set_sensitive(True)
+        self._banner.set_visible(False)
         self._progress.set_fraction(0.0)
         self._progress.set_text(f"0 / {self._total} samples")
         self._wizard.set_can_advance(False)
-        threading.Thread(target=self._run, daemon=True).start()
+        threading.Thread(
+            target=self._run, args=(wipe_existing,), daemon=True
+        ).start()
 
     def _on_stop(self, _btn: Gtk.Button) -> None:
         self._running = False
 
-    def _run(self) -> None:
+    def _run(self, wipe_existing: bool = False) -> None:
         from facelogin.enroll import enroll_user
         try:
             saved = enroll_user(
                 user_id=self._user_id,
                 poses=self._poses,
                 sample_delay=self._sample_delay,
+                wipe_existing=wipe_existing,
                 on_frame=self._on_frame_guard,
                 on_sample=self._on_sample,
                 on_pose=self._on_pose,
@@ -474,6 +543,7 @@ class EnrollPage(WizardPage):
         self._running = False
         self._btn_start.set_sensitive(True)
         self._btn_stop.set_sensitive(False)
+        self._refresh_existing()
 
         if error:
             self._pose_lbl.set_text(f"Error: {error}")
