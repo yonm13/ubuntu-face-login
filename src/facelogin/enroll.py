@@ -186,10 +186,18 @@ def enroll_user(
                 if pose_idx > 0 and pose_transition_delay > 0:
                     next_pose = pose
                     remaining = int(pose_transition_delay)
+                    tick_deadline = time.monotonic()
                     while remaining > 0:
                         if on_pose_transition is not None:
                             on_pose_transition(next_pose, remaining)
-                        time.sleep(1.0)
+                        tick_deadline += 1.0
+                        # Keep reading frames so the video stays live
+                        while time.monotonic() < tick_deadline:
+                            if on_frame is not None:
+                                box, lm, conf = detect_face(frame)
+                                valid, reason = validate_liveness(box, lm, frame.shape)
+                                on_frame(frame, box, lm, conf, valid, reason)
+                            frame = camera.read()
                         remaining -= 1
                     # Fire one last tick at 0 so UI can clear the countdown
                     if on_pose_transition is not None:
