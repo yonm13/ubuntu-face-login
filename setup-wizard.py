@@ -59,6 +59,33 @@ def is_installed() -> bool:
     return WRAPPER.exists()
 
 
+def is_pam_configured() -> bool:
+    """Return True if face auth is already present in any PAM target file."""
+    for key, *_ in PAM_TARGETS:
+        try:
+            if "ubuntu-face-login" in Path(f"/etc/pam.d/{key}").read_text():
+                return True
+        except OSError:
+            pass
+    return False
+
+
+def read_pam_values(key: str) -> tuple[int, float] | None:
+    """Parse timeout and threshold from an existing PAM line for *key*.
+
+    Returns ``(timeout, threshold)`` or ``None`` if not configured.
+    """
+    import re
+    try:
+        text = Path(f"/etc/pam.d/{key}").read_text()
+    except OSError:
+        return None
+    m = re.search(r"ubuntu-face-login.*?timeout=(\d+).*?threshold=([\d.]+)", text)
+    if m:
+        return int(m.group(1)), float(m.group(2))
+    return None
+
+
 def get_enrolled_count(user_id: str) -> int:
     """Return number of .npy embeddings saved for user_id."""
     try:
@@ -754,6 +781,9 @@ class SafetyPage(WizardPage):
     def can_advance(self) -> bool:
         return self._confirmed
 
+    def skip(self) -> bool:
+        return is_pam_configured()
+
 
 class PamPage(WizardPage):
     title = "Enable Face Login"
@@ -770,6 +800,25 @@ class PamPage(WizardPage):
             wrap=True
         )
         self.append(desc)
+
+        # Already-configured banner
+        self._banner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self._banner.set_margin_top(4)
+        self._banner.set_margin_bottom(4)
+        _css(self._banner, "card")
+        banner_lbl = _label(
+            "✓  Face login is already active.  "
+            "Adjust settings and click Apply to update, or click Next to continue.",
+            wrap=True, css="caption"
+        )
+        banner_lbl.set_hexpand(True)
+        banner_lbl.set_margin_top(8)
+        banner_lbl.set_margin_bottom(8)
+        banner_lbl.set_margin_start(10)
+        banner_lbl.set_margin_end(10)
+        self._banner.append(banner_lbl)
+        self._banner.set_visible(False)
+        self.append(self._banner)
 
         self.append(Gtk.Separator())
 
@@ -871,7 +920,23 @@ class PamPage(WizardPage):
 
     def on_enter(self, wizard: "SetupWizard") -> None:
         self._wizard = wizard
-        wizard.set_can_advance(False)
+
+        already = is_pam_configured()
+        self._banner.set_visible(already)
+
+        # Pre-populate spinners from the current PAM files (if configured)
+        for key in self._checks:
+            vals = read_pam_values(key)
+            if vals is not None:
+                timeout, threshold = vals
+                self._timeouts[key].set_value(timeout)
+                self._thresholds[key].set_value(threshold)
+                self._checks[key].set_active(True)
+
+        # Allow advancing without forcing re-apply if already configured
+        if already:
+            self._done = True
+        wizard.set_can_advance(self._done)
 
         # Detect howdy
         try:
