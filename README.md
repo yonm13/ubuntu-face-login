@@ -63,7 +63,7 @@ git clone https://github.com/yonm13/ubuntu-face-login.git
 cd ubuntu-face-login
 
 # Run the setup wizard (recommended — installs, enrolls, and configures PAM)
-python3 setup-wizard.py
+./setup
 ```
 
 Or manually:
@@ -89,7 +89,7 @@ The PAM setup script walks you through each step, asks you to verify `sudo whoam
 The recommended way to set up ubuntu-face-login is the GTK4 wizard:
 
 ```bash
-python3 setup-wizard.py
+./setup
 ```
 
 It guides you through installation, live-camera face enrollment, an authentication test, and PAM configuration — all in one window. Per-service timeouts and match thresholds are configurable from the UI before applying.
