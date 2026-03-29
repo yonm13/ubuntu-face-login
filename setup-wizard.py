@@ -898,11 +898,23 @@ class PamPage(WizardPage):
 
         self.append(Gtk.Separator())
 
+        # Safety confirmation — required before Apply
+        self._safety_check = Gtk.CheckButton(
+            label="I have a root shell open in another terminal  "
+                  "(sudo -i)  — I can restore PAM backups if something breaks"
+        )
+        self._safety_check.set_halign(Gtk.Align.CENTER)
+        self._safety_check.set_margin_top(6)
+        self._safety_check.connect("toggled", self._on_safety_toggled)
+        self.append(self._safety_check)
+
         # Apply button + spinner
         apply_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         apply_row.set_halign(Gtk.Align.CENTER)
+        apply_row.set_margin_top(4)
         self._btn_apply = Gtk.Button(label="Apply")
         self._btn_apply.add_css_class("suggested-action")
+        self._btn_apply.set_sensitive(False)   # enabled only when checkbox ticked
         self._btn_apply.connect("clicked", self._on_apply)
         self._spinner = Gtk.Spinner()
         self._spinner.set_size_request(24, 24)
@@ -947,6 +959,9 @@ class PamPage(WizardPage):
             self._howdy_row.set_visible(result.returncode == 0)
         except Exception:
             pass
+
+    def _on_safety_toggled(self, cb: Gtk.CheckButton) -> None:
+        self._btn_apply.set_sensitive(cb.get_active())
 
     def _on_apply(self, _btn: Gtk.Button) -> None:
         targets = [
@@ -1036,7 +1051,7 @@ class PamPage(WizardPage):
         else:
             self._status.set_text("✗ Some changes failed — check output above")
             self._status.add_css_class("error")
-            self._btn_apply.set_sensitive(True)
+            self._btn_apply.set_sensitive(self._safety_check.get_active())
         return False
 
     def can_advance(self) -> bool:
