@@ -150,6 +150,10 @@ class WizardPage(Gtk.Box):
     def can_advance(self) -> bool:
         return True
 
+    def skip(self) -> bool:
+        """Return True to skip this page entirely during navigation."""
+        return False
+
 
 # ── Page 1: Welcome ──────────────────────────────────────────────────────────
 
@@ -232,18 +236,14 @@ class InstallPage(WizardPage):
         self.append(_section("Output:", sw))
 
     def on_enter(self, wizard: "SetupWizard") -> None:
-        if is_installed():
-            self._status.set_text("Already installed — skipping.")
-            self._done = True
-            self._success = True
-            GLib.timeout_add(600, wizard.next_page)
-            return
-
         self._done = False
         self._success = False
         self._spinner.start()
         self._status.set_text("Running installer… (password prompt will appear)")
         threading.Thread(target=self._run_install, args=(wizard,), daemon=True).start()
+
+    def skip(self) -> bool:
+        return is_installed()
 
     def _run_install(self, wizard: "SetupWizard") -> None:
         cmd = ["pkexec", "bash", str(INSTALL_SH)]
@@ -272,10 +272,9 @@ class InstallPage(WizardPage):
         if ok:
             self._status.set_text("✓ Installation complete")
             self._status.add_css_class("success")
-            # Re-import with the installed path available
             if Path("/opt/ubuntu-face-login/src").exists():
                 sys.path.insert(0, "/opt/ubuntu-face-login/src")
-            GLib.timeout_add(800, wizard.next_page)
+            wizard.next_page()
         else:
             self._status.set_text("✗ Installation failed — check output above")
             self._status.add_css_class("error")
@@ -1078,7 +1077,12 @@ class SetupWizard(Adw.ApplicationWindow):
         self._page_indicator.set_margin_bottom(8)
 
         self.set_content(root)
-        self._show_page(0)
+
+        # Start on the first non-skipped page
+        start = next(
+            i for i, p in enumerate(self._pages) if not p.skip()
+        )
+        self._show_page(start)
 
     def _show_page(self, index: int) -> None:
         self._current = index
@@ -1086,25 +1090,37 @@ class SetupWizard(Adw.ApplicationWindow):
         self._stack.set_visible_child_name(f"page{index}")
         self._title_lbl.set_title(page.title)
         self._title_lbl.set_subtitle(page.subtitle)
-        self._page_indicator.set_text(f"Step {index + 1} of {len(self._pages)}")
+
+        # Step indicator counts only non-skipped pages
+        visible = [i for i, p in enumerate(self._pages) if not p.skip()]
+        step = visible.index(index) + 1 if index in visible else "—"
+        self._page_indicator.set_text(f"Step {step} of {len(visible)}")
 
         is_last = index == len(self._pages) - 1
         self._next_btn.set_label("Finish" if is_last else "Next →")
-        self._back_btn.set_sensitive(index > 0)
+        self._back_btn.set_sensitive(
+            any(i < index and not self._pages[i].skip() for i in range(index))
+        )
         self._can_advance = True
         self.set_can_advance(page.can_advance())
 
         page.on_enter(self)
 
     def next_page(self) -> None:
-        if self._current < len(self._pages) - 1:
-            self._show_page(self._current + 1)
+        idx = self._current + 1
+        while idx < len(self._pages) and self._pages[idx].skip():
+            idx += 1
+        if idx < len(self._pages):
+            self._show_page(idx)
         else:
             self.close()
 
     def prev_page(self) -> None:
-        if self._current > 0:
-            self._show_page(self._current - 1)
+        idx = self._current - 1
+        while idx >= 0 and self._pages[idx].skip():
+            idx -= 1
+        if idx >= 0:
+            self._show_page(idx)
 
     def set_can_advance(self, allowed: bool) -> None:
         self._can_advance = allowed
