@@ -88,7 +88,7 @@ WRAPPER="/usr/local/bin/ubuntu-face-login"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Model URLs and checksums
-FACENET_URL="https://github.com/yonm13/ubuntu-face-login/releases/download/v0.1.0/facenet512.onnx"
+FACENET_URL="https://github.com/yonm13/ubuntu-face-login/releases/latest/download/facenet512.onnx"
 FACENET_SHA256="9a3ac09681674392ffd739e6c456811c3c05ef87d7b3e4ecfe7d5b50fb077a96"
 
 YUNET_URL="https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx"
