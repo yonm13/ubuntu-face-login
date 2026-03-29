@@ -805,7 +805,7 @@ class PamPage(WizardPage):
         self._banner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self._banner.set_margin_top(4)
         self._banner.set_margin_bottom(4)
-        _css(self._banner, "card")
+        self._banner.add_css_class("card")
         banner_lbl = _label(
             "✓  Face login is already active.  "
             "Adjust settings and click Apply to update, or click Next to continue.",
