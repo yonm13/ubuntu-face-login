@@ -64,6 +64,19 @@ def _get_service(pamh) -> str:
         return "default"
 
 
+def _send_msg(pamh, text: str) -> None:
+    """Send a PAM_TEXT_INFO message back to the calling application.
+
+    GDM shows this as status text below the login prompt.
+    sudo prints it to the terminal.
+    Failures are silently ignored — the message is informational only.
+    """
+    try:
+        pamh.conv(pamh.Message(pamh.PAM_TEXT_INFO, text))
+    except Exception:
+        pass
+
+
 def pam_sm_authenticate(pamh, flags, argv):
     """PAM authentication entry point.
 
@@ -85,6 +98,7 @@ def pam_sm_authenticate(pamh, flags, argv):
     subprocess_timeout = script_timeout + _SAFETY_MARGIN
 
     _log(syslog.LOG_INFO, f"Starting auth for service={service} timeout={script_timeout} threshold={threshold}")
+    _send_msg(pamh, "🔍  Face recognition in progress…")
 
     try:
         result = subprocess.run(
@@ -95,12 +109,14 @@ def pam_sm_authenticate(pamh, flags, argv):
         )
         if result.returncode == 0:
             _log(syslog.LOG_INFO, f"Auth succeeded for service={service}")
+            _send_msg(pamh, "✓  Face recognised")
             return PAM_SUCCESS
         else:
             _log(
                 syslog.LOG_INFO,
                 f"Auth failed for service={service}: exit={result.returncode}",
             )
+            _send_msg(pamh, "✗  Face not recognised — falling back to password")
             return PAM_AUTH_ERR
 
     except subprocess.TimeoutExpired:
@@ -108,6 +124,7 @@ def pam_sm_authenticate(pamh, flags, argv):
             syslog.LOG_WARNING,
             f"Auth subprocess timed out after {subprocess_timeout}s for service={service}",
         )
+        _send_msg(pamh, "✗  Face recognition timed out — falling back to password")
         return PAM_AUTH_ERR
 
     except FileNotFoundError:
