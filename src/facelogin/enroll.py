@@ -48,19 +48,87 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Pose:
     """A single guided head position with instructions for the user."""
-    label: str            # short machine-friendly id, e.g. "straight"
-    instruction: str      # human-readable prompt, e.g. "Look straight at the camera"
+    label: str            # short machine-friendly id, e.g. "close_straight"
+    instruction: str      # human-readable prompt shown to the user
     samples: int = 4      # how many samples to capture at this pose
+    transition_delay: Optional[float] = None  # override global delay before this pose
 
 
-DEFAULT_POSES: List[Pose] = [
-    Pose("straight",    "Look straight at the camera",      samples=6),
-    Pose("left",        "Tilt your head slightly LEFT",     samples=4),
-    Pose("right",       "Tilt your head slightly RIGHT",    samples=4),
-    Pose("up",          "Tilt your head slightly UP",       samples=3),
-    Pose("down",        "Tilt your head slightly DOWN",     samples=3),
+# ---------------------------------------------------------------------------
+# Distance-aware pose builder
+# ---------------------------------------------------------------------------
+
+# Base directions (label, instruction, default samples)
+_DIRECTIONS: List[tuple[str, str, int]] = [
+    ("straight", "Look straight at the camera", 6),
+    ("left",     "Turn slightly left",           4),
+    ("right",    "Turn slightly right",          4),
+    ("up",       "Tilt head up slightly",        3),
+    ("down",     "Tilt head down slightly",      3),
 ]
-# Total default: 20 samples across 5 poses — better coverage than 70 frontal
+
+# Distance levels (label, short cue for instructions)
+_DISTANCES: List[tuple[str, str]] = [
+    ("close",  "close (~30 cm / 1 ft)"),
+    ("medium", "medium (~60 cm / 2 ft)"),
+    ("far",    "far (~1 m / 3 ft)"),
+]
+
+# Pause given before the first pose of a new distance group so the user
+# has time to reposition.  Shown as a countdown in the UI.
+DISTANCE_TRANSITION_DELAY: float = 8.0
+
+
+def build_poses(
+    n_distances: int = 3,
+    direction_samples: Optional[List[int]] = None,
+) -> List[Pose]:
+    """Build a flat guided pose list with *n_distances* distance phases.
+
+    Args:
+        n_distances:       1, 2, or 3 — number of distance levels to include.
+        direction_samples: Override sample counts per direction (5 values,
+                           matching the order in ``_DIRECTIONS``).  When
+                           ``None``, the defaults in ``_DIRECTIONS`` are used.
+
+    The first pose of each distance phase (except the very first) gets
+    ``transition_delay = DISTANCE_TRANSITION_DELAY`` so the enrollment loop
+    gives the user time to reposition before capturing resumes.
+    """
+    if direction_samples is None:
+        direction_samples = [samples for _, _, samples in _DIRECTIONS]
+
+    poses: List[Pose] = []
+    for d_idx, (dist_key, dist_label) in enumerate(_DISTANCES[:n_distances]):
+        for p_idx, ((dir_key, dir_instruction, _), samples) in enumerate(
+            zip(_DIRECTIONS, direction_samples)
+        ):
+            is_first_of_new_distance = d_idx > 0 and p_idx == 0
+
+            if is_first_of_new_distance:
+                # Prominent instruction: distance cue + first direction
+                instruction = f"📍 Move to {dist_label}  —  {dir_instruction}"
+                delay = DISTANCE_TRANSITION_DELAY
+            elif n_distances > 1:
+                # Subsequent poses show the distance label in brackets
+                instruction = f"{dir_instruction}  [{dist_label}]"
+                delay = None
+            else:
+                # Single-distance mode: plain instruction (matches old default)
+                instruction = dir_instruction
+                delay = None
+
+            poses.append(Pose(
+                label=f"{dist_key}_{dir_key}",
+                instruction=instruction,
+                samples=samples,
+                transition_delay=delay,
+            ))
+    return poses
+
+
+DEFAULT_POSES: List[Pose] = build_poses(n_distances=3)
+# Total: (6+4+4+3+3) × 3 distances = 60 samples
 
 
 # ---------------------------------------------------------------------------
@@ -199,25 +267,31 @@ def enroll_user(
                 pose_saved = 0
 
                 # Countdown before pose starts (skip for first pose)
-                if pose_idx > 0 and pose_transition_delay > 0:
-                    next_pose = pose
-                    remaining = int(pose_transition_delay)
-                    tick_deadline = time.monotonic()
-                    while remaining > 0:
+                if pose_idx > 0:
+                    delay = (
+                        pose.transition_delay
+                        if pose.transition_delay is not None
+                        else pose_transition_delay
+                    )
+                    if delay > 0:
+                        next_pose = pose
+                        remaining = int(delay)
+                        tick_deadline = time.monotonic()
+                        while remaining > 0:
+                            if on_pose_transition is not None:
+                                on_pose_transition(next_pose, remaining)
+                            tick_deadline += 1.0
+                            # Keep reading frames so the video stays live
+                            while time.monotonic() < tick_deadline:
+                                if on_frame is not None:
+                                    box, lm, conf = detect_face(frame)
+                                    valid, reason = validate_liveness(box, lm, frame.shape)
+                                    on_frame(frame, box, lm, conf, valid, reason)
+                                frame = camera.read()
+                            remaining -= 1
+                        # Fire one last tick at 0 so UI can clear the countdown
                         if on_pose_transition is not None:
-                            on_pose_transition(next_pose, remaining)
-                        tick_deadline += 1.0
-                        # Keep reading frames so the video stays live
-                        while time.monotonic() < tick_deadline:
-                            if on_frame is not None:
-                                box, lm, conf = detect_face(frame)
-                                valid, reason = validate_liveness(box, lm, frame.shape)
-                                on_frame(frame, box, lm, conf, valid, reason)
-                            frame = camera.read()
-                        remaining -= 1
-                    # Fire one last tick at 0 so UI can clear the countdown
-                    if on_pose_transition is not None:
-                        on_pose_transition(next_pose, 0)
+                            on_pose_transition(next_pose, 0)
 
                 if on_pose is not None:
                     on_pose(pose_idx, pose, pose.samples, len(capture_poses))

@@ -349,14 +349,18 @@ class EnrollPage(WizardPage):
             )
 
     def _build_camera_widget(self, wizard: "SetupWizard") -> None:
-        from facelogin.enroll import DEFAULT_POSES, enroll_user
+        from facelogin.enroll import (
+            build_poses, _DIRECTIONS, DISTANCE_TRANSITION_DELAY
+        )
         from facelogin.config import get_config
         import copy
         import glob
         import cv2
         import numpy as np
 
-        self._poses = [copy.copy(p) for p in DEFAULT_POSES]
+        self._n_distances = 3
+        self._direction_samples = [s for _, _, s in _DIRECTIONS]
+        self._poses = build_poses(self._n_distances, self._direction_samples)
         self._total = sum(p.samples for p in self._poses)
         self._saved = 0
         self._running = False
@@ -420,12 +424,33 @@ class EnrollPage(WizardPage):
         self._btn_stop.connect("clicked", self._on_stop)
         self._btn_stop.set_sensitive(False)
 
+        self._btn_settings = Gtk.Button(label="⚙ Settings")
+        self._btn_settings.connect("clicked", self._on_settings_clicked)
+
+        btn_row.append(self._btn_settings)
         btn_row.append(self._btn_start)
         btn_row.append(self._btn_stop)
         self._enroll_container.append(btn_row)
 
         self._camera_widget_built = True
         self._refresh_existing()
+
+    def _on_settings_clicked(self, _btn: Gtk.Button) -> None:
+        from facelogin.enroll import _DIRECTIONS, _DISTANCES, build_poses
+        dlg = EnrollSettingsDialog(
+            self.get_root(),
+            n_distances=self._n_distances,
+            direction_samples=self._direction_samples,
+        )
+        def on_response(d, response):
+            if response == Gtk.ResponseType.OK:
+                self._n_distances, self._direction_samples = d.get_result()
+                self._poses = build_poses(self._n_distances, self._direction_samples)
+                self._total = sum(p.samples for p in self._poses)
+                self._progress.set_text(f"0 / {self._total} samples")
+            d.destroy()
+        dlg.connect("response", on_response)
+        dlg.present()
 
     def _count_existing(self) -> int:
         import glob
@@ -481,6 +506,7 @@ class EnrollPage(WizardPage):
         self._enrolled = False
         self._btn_start.set_sensitive(False)
         self._btn_stop.set_sensitive(True)
+        self._btn_settings.set_sensitive(False)
         self._banner.set_visible(False)
         self._progress.set_fraction(0.0)
         self._progress.set_text(f"0 / {self._total} samples")
@@ -569,6 +595,7 @@ class EnrollPage(WizardPage):
         self._running = False
         self._btn_start.set_sensitive(True)
         self._btn_stop.set_sensitive(False)
+        self._btn_settings.set_sensitive(True)
         self._refresh_existing()
 
         if error:
@@ -594,6 +621,94 @@ class EnrollPage(WizardPage):
 
     def can_advance(self) -> bool:
         return self._enrolled or get_enrolled_count(getpass.getuser()) > 0
+
+
+# ── Enroll settings dialog ────────────────────────────────────────────────────
+
+class EnrollSettingsDialog(Gtk.Dialog):
+    """Lets the user configure distance count and per-direction sample counts."""
+
+    def __init__(
+        self,
+        parent: Gtk.Window,
+        n_distances: int = 3,
+        direction_samples: Optional[list] = None,
+    ) -> None:
+        super().__init__(title="Enrollment Settings", transient_for=parent, modal=True)
+        self.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        self.add_button("OK", Gtk.ResponseType.OK)
+        self.set_default_size(400, -1)
+
+        from facelogin.enroll import _DIRECTIONS, _DISTANCES, build_poses
+
+        box = self.get_content_area()
+        box.set_spacing(12)
+        box.set_margin_top(16)
+        box.set_margin_bottom(16)
+        box.set_margin_start(20)
+        box.set_margin_end(20)
+
+        # --- Distance count ---
+        box.append(_label("Distances", css="heading"))
+        dist_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
+        dist_box.set_halign(Gtk.Align.CENTER)
+        self._dist_spin = Gtk.SpinButton.new_with_range(1, len(_DISTANCES), 1)
+        self._dist_spin.set_value(n_distances)
+        self._dist_spin.set_snap_to_ticks(True)
+        dist_box.append(_label("Number of distance levels:"))
+        dist_box.append(self._dist_spin)
+        box.append(dist_box)
+
+        hint_texts = [f"{i+1} — {', '.join(l for _, l in _DISTANCES[:i+1])}"
+                      for i in range(len(_DISTANCES))]
+        self._dist_hint = _label(hint_texts[n_distances - 1], css="dim-label")
+        self._dist_hint.set_halign(Gtk.Align.CENTER)
+        self._dist_spin.connect("value-changed",
+            lambda s: self._dist_hint.set_text(hint_texts[int(s.get_value()) - 1]))
+        box.append(self._dist_hint)
+
+        box.append(Gtk.Separator())
+
+        # --- Samples per direction ---
+        box.append(_label("Samples per direction (per distance level)", css="heading"))
+
+        grid = Gtk.Grid(column_spacing=12, row_spacing=6)
+        grid.set_margin_start(8)
+        self._dir_spins: list[Gtk.SpinButton] = []
+        for i, (_, direction_label, default_samples) in enumerate(_DIRECTIONS):
+            lbl = Gtk.Label(label=direction_label)
+            lbl.set_halign(Gtk.Align.START)
+            lbl.set_hexpand(True)
+            grid.attach(lbl, 0, i, 1, 1)
+
+            spin = Gtk.SpinButton.new_with_range(1, 20, 1)
+            spin.set_value(direction_samples[i] if direction_samples else default_samples)
+            self._dir_spins.append(spin)
+            grid.attach(spin, 1, i, 1, 1)
+
+        box.append(grid)
+
+        # --- Live total ---
+        self._total_lbl = _label("", css="dim-label")
+        self._total_lbl.set_halign(Gtk.Align.CENTER)
+        self._total_lbl.set_margin_top(4)
+        box.append(self._total_lbl)
+        self._update_total()
+
+        for spin in self._dir_spins:
+            spin.connect("value-changed", lambda _: self._update_total())
+        self._dist_spin.connect("value-changed", lambda _: self._update_total())
+
+    def _update_total(self) -> None:
+        n_dist = int(self._dist_spin.get_value())
+        per_dist = sum(int(s.get_value()) for s in self._dir_spins)
+        total = per_dist * n_dist
+        self._total_lbl.set_text(f"Total samples: {per_dist} × {n_dist} distances = {total}")
+
+    def get_result(self) -> tuple[int, list[int]]:
+        n_distances = int(self._dist_spin.get_value())
+        direction_samples = [int(s.get_value()) for s in self._dir_spins]
+        return n_distances, direction_samples
 
 
 # ── Page 4: Test ─────────────────────────────────────────────────────────────
