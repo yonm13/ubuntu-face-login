@@ -72,7 +72,7 @@ def _send_msg(pamh, text: str) -> None:
     Failures are silently ignored — the message is informational only.
     """
     try:
-        pamh.conv(pamh.Message(pamh.PAM_TEXT_INFO, text))
+        pamh.conversation(pamh.Message(pamh.PAM_TEXT_INFO, text))
     except Exception:
         pass
 
