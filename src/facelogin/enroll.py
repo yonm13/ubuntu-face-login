@@ -76,7 +76,7 @@ _DISTANCES: List[tuple[str, str]] = [
 
 # Pause given before the first pose of a new distance group so the user
 # has time to reposition.  Shown as a countdown in the UI.
-DISTANCE_TRANSITION_DELAY: float = 8.0
+DISTANCE_TRANSITION_DELAY: float = 5.0
 
 
 def build_poses(

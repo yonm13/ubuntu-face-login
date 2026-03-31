@@ -476,23 +476,23 @@ class EnrollPage(WizardPage):
             self._banner.set_visible(False)
 
     def _on_reenroll_clicked(self, _btn: Gtk.Button) -> None:
-        dlg = Gtk.MessageDialog(
+        dlg = Adw.MessageDialog(
             transient_for=self.get_root(),
-            modal=True,
-            message_type=Gtk.MessageType.WARNING,
-            buttons=Gtk.ButtonsType.OK_CANCEL,
-            text=f"Delete all existing samples for '{self._user_id}'?",
+            heading=f"Delete all existing samples for '{self._user_id}'?",
+            body=(
+                "This will permanently remove the currently enrolled face data "
+                "and capture a fresh set of samples. You cannot undo this."
+            ),
         )
-        dlg.format_secondary_text(
-            "This will permanently remove the currently enrolled face data "
-            "and capture a fresh set of samples. You cannot undo this."
-        )
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("ok", "Re-enroll")
+        dlg.set_response_appearance("ok", Adw.ResponseAppearance.DESTRUCTIVE)
         dlg.connect("response", self._on_reenroll_confirm)
         dlg.present()
 
-    def _on_reenroll_confirm(self, dlg, response: int) -> None:
+    def _on_reenroll_confirm(self, dlg, response: str) -> None:
         dlg.destroy()
-        if response == Gtk.ResponseType.OK:
+        if response == "ok":
             self._start_run(wipe_existing=True)
 
     # Enrollment thread callbacks
